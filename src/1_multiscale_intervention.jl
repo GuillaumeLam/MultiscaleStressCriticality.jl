@@ -1,7 +1,9 @@
 module MultiscaleFramework
 
-using Random, LinearAlgebra, DifferentialEquations, PyPlot, StatsBase, Statistics, FFTW, Printf
-using Plots
+using Random, LinearAlgebra, DifferentialEquations, StatsBase, Statistics, FFTW, Printf
+# using PyPlot, 
+using PyPlot
+using GLMakie, FileIO, Colors, GeometryBasics
 
 ###############################################################################
 # 1) Sub-Level ODE Functions
@@ -219,7 +221,7 @@ end
 
 Computes the branching ratio (λ) over rolling windows of size `win_size`.
 """
-function compute_rolling_branching_ratio(sol, scales; win_size=100)
+function compute_rolling_branching_ratio(sol, scales; win_size=50)
     t_vals = sol.t
     num_windows = length(t_vals) - win_size + 1
     λ_values = Dict(name => zeros(num_windows) for name in [s.name for s in scales])
@@ -242,7 +244,7 @@ end
 
 Computes fluctuation scaling (β) in rolling windows.
 """
-function compute_rolling_fluctuation_scaling(sol, scales; win_size=100)
+function compute_rolling_fluctuation_scaling(sol, scales; win_size=50)
     t_vals = sol.t
     num_windows = length(t_vals) - win_size + 1
     scaling_exponents = Dict(name => zeros(num_windows) for name in [s.name for s in scales])
@@ -319,33 +321,69 @@ end
 # 4) Generate 3D Movies of System Dynamics
 ###############################################################################
 
-"""
-    generate_3D_movie(sol, scales, filename)
+using GLMakie, FileIO, Colors, GeometryBasics
 
-Creates a 3D animation of the system dynamics.
 """
-function generate_3D_movie(sol, scales, filename="multiscale_dynamics.png")
-    
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection="3d")
-    
+    generate_3D_movie(sol, scales, filename="multiscale_dynamics.mp4")
+
+Creates an animated 3D scatter plot of oscillator dynamics with proper layering and phase encoding.
+"""
+function generate_3D_movie(sol, scales, filename="out/multiscale_dynamics.mp4")
+    fig = GLMakie.Figure(size=(900, 650))
+    ax = Axis3(fig[1, 1], title="3D Dynamics of Multiscale System",
+               xlabel="X", ylabel="Y", zlabel="Z")
+
     u_vals = hcat(sol.u...)
     t_vals = sol.t
-    
-    for scale in scales
-        name, offset, size = scale.name, scale.offset, scale.size
-        ax.plot(u_vals[offset, :], u_vals[offset+1, :], u_vals[offset+2, :], label=name)
+    num_frames = length(t_vals)
+
+    # Define base Z positions for layers
+    z_positions = Dict(
+        "behavior" => 3.0,
+        "neural" => 2.0,
+        "genes" => 1.0
+    )
+
+    # Assign base X-Y offsets to prevent overlap
+    x_offsets = Dict(scale.name => collect(range(-1, stop=1, length=scale.size)) for scale in scales)
+    y_offsets = Dict(scale.name => collect(range(-1, stop=1, length=scale.size)) for scale in scales)
+
+    # Observable for scatter points
+    scatter_points = Observable(Vector{Point3f}())
+
+    # Observable for colors
+    scatter_colors = Observable(Vector{RGBAf}())
+
+    # Create initial scatter plot
+    scatter!(ax, scatter_points, color=scatter_colors, markersize=15)
+
+    # Animation loop
+    record(fig, filename, 1:num_frames; framerate=30) do frame
+        # Create new lists of points and colors for the current frame
+        new_points = Point3f[]
+        new_colors = RGBAf[]
+
+        for scale in scales
+            name, offset, size = scale.name, scale.offset, scale.size
+            x = u_vals[offset, frame] .+ x_offsets[name]
+            y = u_vals[offset+1, frame] .+ y_offsets[name]
+            z = fill(z_positions[name], size)
+
+            # Compute phase color encoding
+            phase = atan.(u_vals[offset+1, frame], u_vals[offset, frame])
+            colors = [RGBAf(sin(p), cos(p), 0.5, 1.0) for p in phase]
+
+            # Store points and colors for this scale
+            append!(new_points, [Point3f(x[i], y[i], z[i]) for i in 1:size])
+            append!(new_colors, colors)
+        end
+
+        # Overwrite Observables with new data for this frame
+        scatter_points[] = new_points
+        scatter_colors[] = new_colors
     end
-    
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
-    ax.set_zlabel("Z")
-    plt.legend()
-    plt.title("3D Dynamics of Multiscale System")
-    
-    plt.savefig(filename)
+
     println("3D movie saved as $filename")
-    
     return filename
 end
 
@@ -550,4 +588,4 @@ println(size(sol))
 
 
 plot_criticality_measures(sol, scales)
-generate_3D_movie(sol, scales, "out/multiscale_dynamics.png")
+generate_3D_movie(sol, scales)
