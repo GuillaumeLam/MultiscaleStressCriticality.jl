@@ -2,8 +2,7 @@ module MultiscaleFramework
 
 using Random, LinearAlgebra, DifferentialEquations, StatsBase, Statistics, FFTW, Printf
 # using PyPlot, 
-using PyPlot
-using GLMakie, FileIO, Colors, GeometryBasics
+using PyPlot, GLMakie, FileIO, Colors, GeometryBasics
 
 ###############################################################################
 # 1) Sub-Level ODE Functions
@@ -227,11 +226,11 @@ function compute_rolling_branching_ratio(sol, scales; win_size=50)
     λ_values = Dict(name => zeros(num_windows) for name in [s.name for s in scales])
 
     for scale in scales
-        name, offset, size = scale.name, scale.offset, scale.size
+        name, offset, ssize = scale.name, scale.offset, scale.size
         u_vals = hcat(sol.u...)
 
         for i in 1:num_windows
-            window_activity = mean(abs.(u_vals[offset:offset+size-1, i:i+win_size-1]), dims=1)
+            window_activity = mean(abs.(u_vals[offset:offset+ssize-1, i:i+win_size-1]), dims=1)
             λ_values[name][i] = mean(window_activity[2:end] ./ window_activity[1:end-1])
         end
     end
@@ -250,11 +249,11 @@ function compute_rolling_fluctuation_scaling(sol, scales; win_size=50)
     scaling_exponents = Dict(name => zeros(num_windows) for name in [s.name for s in scales])
 
     for scale in scales
-        name, offset, size = scale.name, scale.offset, scale.size
+        name, offset, ssize = scale.name, scale.offset, scale.size
         u_vals = hcat(sol.u...)
 
         for i in 1:num_windows
-            window_data = abs.(u_vals[offset:offset+size-1, i:i+win_size-1])
+            window_data = abs.(u_vals[offset:offset+ssize-1, i:i+win_size-1])
             means = mean(window_data, dims=2)[:, 1]  # Convert to 1D
             variances = var(window_data, dims=2)[:, 1]
 
@@ -273,6 +272,48 @@ function compute_rolling_fluctuation_scaling(sol, scales; win_size=50)
     end
     
     return scaling_exponents, t_vals[1:num_windows]  # Return time-aligned rolling β
+end
+
+"""
+    compute_psd(sol, scales; fs=1.0)
+
+Computes the Power Spectral Density (PSD) for each oscillator level.
+"""
+function compute_psd(sol, scales; fs=1.0)
+    psd_values = Dict()
+    freqs_dict = Dict()
+
+    for scale in scales
+        name, offset, ssize = scale.name, scale.offset, scale.size
+        u_vals = hcat(sol.u...)  # Convert solution to matrix
+        t_vals = sol.t  # Time points
+
+        # Adjust size for SL and AP since they use 2 params per oscillator
+        if name == "neural" || name == "genes"
+            ssize = Int(ssize / 2)
+        end
+
+        # Extract time-series data for this level
+        signals = u_vals[offset:offset+ssize-1, :]
+        # signals = vcat(signals...)
+
+        # Compute PSD using FFT
+        psd_matrix = []
+        # freqs = fftfreq(size(signals, 2), fs)
+        freqs = 1:fs:size(signals, 2)
+
+        for i in 1:ssize
+            signal_fft = fft(signals[i, :])
+            psd = abs2.(signal_fft) / length(signal_fft)
+            push!(psd_matrix, psd[1:div(end, 2)])  # Keep positive frequencies only
+        end
+
+        # Store results
+        psd_values[name] = reduce(hcat, psd_matrix)
+        freqs_dict[name] = freqs[1:div(end, 2)]
+    end
+
+    return psd_values, freqs_dict
 end
 
 ###############################################################################
@@ -317,11 +358,94 @@ function plot_criticality_measures(sol, scales)
     plt.savefig("out/criticality_measures.png")
 end
 
+"""
+    plot_psd_and_criticality(sol, scales)
+
+Plots both criticality measures and frequency analysis.
+"""
+function plot_psd_and_criticality(sol, scales)
+    t_vals = sol.t  # Time points
+    
+    # fig = GLMakie.Figure(size=(1000, 800))
+    # axs = [Axis(fig[i, 1], title="Branching Ratio") for i in 1:3]
+
+    fig, axs = plt.subplots(3, 1, figsize=(10, 6), sharex=true)
+    
+    # Compute criticality measures
+    λ_values, _ = compute_rolling_branching_ratio(sol, scales)
+    scaling_exponents, _ = compute_rolling_fluctuation_scaling(sol, scales)
+
+    # Compute PSD
+    psd_values, freqs_dict = compute_psd(sol, scales)
+
+    # # Plot Branching Ratio
+    # for (name, λ) in λ_values
+    #     lines!(axs[1], t_vals[2:end], fill(λ, length(t_vals)-1), label=name)
+    # end
+    # axs[1].ylabel = "Branching Ratio (λ)"
+
+    # # Plot Fluctuation Scaling
+    # for (name, β) in scaling_exponents
+    #     lines!(axs[2], t_vals, fill(β, length(t_vals)), label=name)
+    # end
+    # axs[2].ylabel = "Fluctuation Scaling (β)"
+
+    # Plot branching ratio evolution
+    for scale in scales
+        name = scale.name
+        axs[2].plot(λ_values[name], label=name)
+    end
+    axs[2].set_ylabel("Branching Ratio (λ)")
+    axs[2].legend()
+    axs[2].set_title("Branching Ratio Over Time")
+    
+    # Plot fluctuation scaling exponent evolution
+    for scale in scales
+        name = scale.name
+        axs[1].plot(scaling_exponents[name], label=name)
+    end
+    axs[1].set_ylabel("Fluctuation Scaling (β)")
+    axs[1].legend()
+    axs[1].set_title("Fluctuation Scaling Exponent Over Time")
+    
+    # plt.show()
+    # plt.savefig("out/criticality_measures.png")
+
+    # Plot PSDs
+    # axs_psd = Axis(fig[3, 1], title="Power Spectral Density (PSD)")
+    # for (name, psd_matrix) in psd_values
+    #     freqs = freqs_dict[name]
+    #     mean_psd = mean(psd_matrix, dims=2)
+    #     lines!(axs_psd, freqs, mean_psd, label=name)
+    # end
+    # axs_psd.ylabel = "PSD Power"
+    # axs_psd.xlabel = "Frequency (Hz)"
+
+    for scale in scales
+        name = scale.name
+        mean_psd = mean(psd_values[name], dims=2)
+        # mean_psd = mean_psd[:100]
+        axs[3].plot(mean_psd, label=name)
+    end
+    axs[3].set_ylabel("PSD Power")
+    axs[3].legend()
+    axs[3].set_title("Power Spectrum Density")
+    axs[3].set_xlabel("Frequency (Hz)")
+
+    # Show legend
+    # fig[3, 1] = Legend(fig, axs_psd, "Levels", framevisible=false)
+    
+    axs[2].set_xlabel("Time")
+    plt.tight_layout()
+    # display(fig)
+    plt.savefig("out/psd_criticality_measures.png")
+end
+
 ###############################################################################
 # 4) Generate 3D Movies of System Dynamics
 ###############################################################################
 
-using GLMakie, FileIO, Colors, GeometryBasics
+# using GLMakie, FileIO, Colors, GeometryBasics
 
 """
     generate_3D_movie(sol, scales, filename="multiscale_dynamics.mp4")
@@ -329,9 +453,24 @@ using GLMakie, FileIO, Colors, GeometryBasics
 Creates an animated 3D scatter plot of oscillator dynamics with proper layering and phase encoding.
 """
 function generate_3D_movie(sol, scales, filename="out/multiscale_dynamics.mp4")
-    fig = GLMakie.Figure(size=(900, 650))
-    ax = Axis3(fig[1, 1], title="3D Dynamics of Multiscale System",
-               xlabel="X", ylabel="Y", zlabel="Z")
+    scatter_points = Observable(Vector{Point3f}())
+    # time = Observable(0)
+    scatter_colors = Observable(Vector{RGBAf}())
+
+    # scatter_points = Observable(Point3f[(1,1,1)])
+    # scatter_colors = Observable([RGBAf(0.5,0.5,0.5,1.0)])
+
+    # Create initial scatter plot
+    # scatter!(ax, scatter_points, color=scatter_colors, markersize=15)
+    # scatter!(ax, scatter_points, markersize=15)
+    
+    # fig = GLMakie.Figure(size=(900, 650))
+    # ax = Axis3(fig[1, 1], title="3D Dynamics of Multiscale System",
+            #    xlabel="X", ylabel="Y", zlabel="Z")
+
+    # fig, ax, scat = GLMakie.scatter(scatter_points, color=scatter_colors, axis=(;type=Axis3), markersize=15)
+    # fig, ax, scat = GLMakie.scatter(scatter_points, axis=(;type=Axis3, title=@lift("t = $time")), markersize=15)
+    # fig, ax, scat = GLMakie.scatter(scatter_points, axis=(;type=Axis3), markersize=15)
 
     u_vals = hcat(sol.u...)
     t_vals = sol.t
@@ -344,18 +483,37 @@ function generate_3D_movie(sol, scales, filename="out/multiscale_dynamics.mp4")
         "genes" => 1.0
     )
 
+    offsets = Dict(
+        "behavior" => Dict(k => (cos(2π * k / scales[1].size), sin(2π * k / scales[1].size)) for k in 1:scales[1].size),  # Circular layout
+        "neural"   => Dict(k => ((k-1) % 2 - 0.5, (k-1) ÷ 2 - 0.5) for k in 1:Int(scales[2].size / 2)),  # Grid layout
+        "genes"    => Dict(k => (k-1, 0) for k in 1:Int(scales[3].size / 2))  # Linear layout
+    )
+
     # Assign base X-Y offsets to prevent overlap
     x_offsets = Dict(scale.name => collect(range(-1, stop=1, length=scale.size)) for scale in scales)
     y_offsets = Dict(scale.name => collect(range(-1, stop=1, length=scale.size)) for scale in scales)
 
-    # Observable for scatter points
-    scatter_points = Observable(Vector{Point3f}())
+    level_colors = Dict(
+        "behavior" => RGBAf(0.0, 0.0, 1.0, 1.0),  # Blue
+        "neural"   => RGBAf(1.0, 0.5, 0.0, 1.0),  # Orange
+        "genes"    => RGBAf(0.0, 1.0, 0.0, 1.0)   # Green
+    )
 
-    # Observable for colors
-    scatter_colors = Observable(Vector{RGBAf}())
+    # scatter_colors = []
+    # for scale in scales
+    #     name, offset, size = scale.name, scale.offset, scale.size
+    #     if name == "neural" || name == "genes"
+    #         size = Int(size / 2)  # Adjust for two-parameter oscillators
+    #     end
+    #     append!(scatter_colors, fill(level_colors[name], size))
+    # end
+    # scatter_colors_obs = Observable(scatter_colors)
 
-    # Create initial scatter plot
-    scatter!(ax, scatter_points, color=scatter_colors, markersize=15)
+    # println(scatter_colors_obs)
+    # println(size(scatter_colors_obs))
+
+    fig, ax, scat = GLMakie.scatter(scatter_points, color=scatter_colors, axis=(;type=Axis3), markersize=15)
+    GLMakie.limits!(ax, -10, 10, -10, 10, 0, 4)
 
     # Animation loop
     record(fig, filename, 1:num_frames; framerate=30) do frame
@@ -364,23 +522,78 @@ function generate_3D_movie(sol, scales, filename="out/multiscale_dynamics.mp4")
         new_colors = RGBAf[]
 
         for scale in scales
-            name, offset, size = scale.name, scale.offset, scale.size
-            x = u_vals[offset, frame] .+ x_offsets[name]
-            y = u_vals[offset+1, frame] .+ y_offsets[name]
-            z = fill(z_positions[name], size)
+            scale_osc_offset_x = 0
+            scale_osc_offset_y = 0
+            name, offset, ssize = scale.name, scale.offset, scale.size
 
-            # Compute phase color encoding
-            phase = atan.(u_vals[offset+1, frame], u_vals[offset, frame])
-            colors = [RGBAf(sin(p), cos(p), 0.5, 1.0) for p in phase]
+            # println(name, offset, size)
 
-            # Store points and colors for this scale
-            append!(new_points, [Point3f(x[i], y[i], z[i]) for i in 1:size])
-            append!(new_colors, colors)
+            if name == "neural" || name == "genes"
+                ssize = Int(ssize / 2)     # two time the number of params
+            end
+
+            for k in 1:ssize
+                x_offset, y_offset = offsets[name][k]
+                if name == "behavior"  # HKB: Phase to XY
+                    ϕ = u_vals[offset + (k-1), frame]
+                    x, y = cos(ϕ), sin(ϕ)
+                    z = 3.0
+
+                elseif name == "neural"  # SL: Real & Imaginary Components
+                    x = u_vals[offset + 2(k-1) + 1, frame]
+                    y = u_vals[offset + 2(k-1) + 2, frame]
+                    z = 2.0
+
+                elseif name == "genes"  # AP: Amplitude & Phase
+                    r = u_vals[offset + 2(k-1) + 1, frame]
+                    θ = u_vals[offset + 2(k-1) + 2, frame]
+                    x, y = r * cos(θ), r * sin(θ)
+                    z = 1.0
+                end
+
+                # z = zs[k]  # Assign unique Z height
+
+                # Compute phase color encoding
+                # phase = atan(y, x)
+                # color = RGBAf(sin(phase), cos(phase), 0.5, 1.0)
+
+                # push!(new_points, Point3f(x, y, z))
+                # push!(new_colors, color)
+
+                append!(new_points, [Point3f(x+x_offset, y+y_offset, z)])
+                append!(new_colors, [level_colors[name]])
+            end
+
+            # x = u_vals[offset, frame] .+ x_offsets[name]
+            # y = u_vals[offset+1, frame] .+ y_offsets[name]
+            # z = fill(z_positions[name], size)
+
+
+
+            # # Compute phase color encoding
+            # # phase = atan.(u_vals[offset+1, frame], u_vals[offset, frame])
+            # # colors = [RGBAf(sin(p), cos(p), 0.5, 1.0) for p in phase]
+
+            # # Store points and colors for this scale
+            # append!(new_points, [Point3f(cos(x[i]), sin(y[i]), z[i]) for i in 1:size])
+            # # append!(new_colors, colors)
         end
 
+        # println(frame)
+
+        # println("scatter points: ", scatter_points)
+        # println("scatter colors", scatter_colors)
+
+        # println("new points:", new_points)
+        # println("new colors:", new_colors)
+
         # Overwrite Observables with new data for this frame
+        # scatter_points[] = push!(scatter_points[], new_points)
+        # scatter_colors[] = push!(scatter_colors[], new_colors)
+
         scatter_points[] = new_points
         scatter_colors[] = new_colors
+        # time[] = frame
     end
 
     println("3D movie saved as $filename")
@@ -439,9 +652,9 @@ function main()
     # Level2: Neural (SL) with n_n=2 oscillators => total dimension=2*2=4
     # Level3: Genes (GENE) with n_g=2 amplitude-phase => dimension=4
 
-    n_b = 2
-    n_n = 3
-    n_g = 2
+    n_b = 5
+    n_n = 8
+    n_g = 5
 
     # We'll define offsets in the big state vector:
     offset_b = 1
@@ -454,11 +667,14 @@ function main()
     # => bilateral graph of tentacles + hub
     A_b = ones(n_b,n_b) .- I(n_b)
     p_behavior = (
-        ω = [1.0, 1.05, 0.95], # intrinsic freq
+        # ω = [1.0, 1.05, 0.95], # intrinsic freq
+        ω = rand(n_b),
         a = 0.5,
         b = -0.3,
         A = A_b
     )
+
+    println("behavior connectivity: ", A_b)
 
     # 2) Neural scale: SL
     # adjacency for neural: fully connected or ring
@@ -466,21 +682,28 @@ function main()
     A_n = ones(n_n,n_n) .- I(n_n)
     p_neural = (
         μ = 0.1,
-        ω = [1.0, 1.2],
+        # ω = [1.0, 1.2],
+        ω = rand(n_n),
         K = 0.4,
         A = A_n
     )
+
+    println("neaural connectivity: ", A_n)
 
     # 3) Gene scale: GENE
     # adjacency for gene
     # => directed graph of 
     A_g = ones(n_g,n_g) .- I(n_g)
     p_genes = (
-        μg = [0.05, 0.07],
-        ωg = [1.0, 1.1],
+        # μg = [0.05, 0.07],
+        μg = rand(n_g),
+        # ωg = [1.0, 1.1],
+        ωg = rand(n_g),
         Kg = 0.2,
         A  = A_g
     )
+
+    println("gene connectivity: ", A_g)
 
     # Put scale definitions together
     # Each scale has (name, model_type, size, offset, p_scale)
@@ -573,8 +796,8 @@ end
 
 end # module
 
-using .MultiscaleFramework: main, compute_rolling_branching_ratio, compute_rolling_fluctuation_scaling, generate_3D_movie, plot_criticality_measures
-sol, scales = main()
+using .MultiscaleFramework: main, generate_3D_movie, plot_psd_and_criticality
+@time sol, scales = main()
 
 # println(sol)
 println(size(sol))
@@ -587,5 +810,6 @@ println(size(sol))
 # β_series, t_β = compute_rolling_fluctuation_scaling(sol, scales, win_size=100)
 
 
-plot_criticality_measures(sol, scales)
+# plot_criticality_measures(sol, scales)
+plot_psd_and_criticality(sol, scales)
 generate_3D_movie(sol, scales)
