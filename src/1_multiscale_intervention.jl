@@ -489,21 +489,32 @@ end
 ###############################################################################
 
 """
-    plot_psd_and_criticality(sol, scales)
+    plot_criticality(sol, scales)
 
-Plots both criticality measures and frequency analysis.
+Plot criticality Measures
 """
-function plot_psd_and_criticality(sol, scales)
+
+function plot_criticality(sol, scales)
     t_vals = sol.t  # Time points
 
-    fig, axs = plt.subplots(3, 1, figsize=(10, 6), sharex=true)
+    fig, axs = plt.subplots(2, 1, figsize=(10, 6), sharex=true)
     
     # Compute criticality measures
     λ_values, _ = compute_rolling_branching_ratio(sol, scales)
     scaling_exponents, _ = compute_rolling_fluctuation_scaling(sol, scales)
 
-    # Compute PSD
-    psd_values, freqs_dict = compute_psd(sol, scales)
+    # i=0
+    # sstep = 15
+    # # Compute PSD over substeps
+    # while i>=0
+    #     if i+sstep > ssize
+    #         i=-1
+    #     else
+    #         psd_values, freqs_dict = compute_psd(sol[:,], scales)
+    #         i=i+1
+    #     end
+    # end
+    # psd_values, freqs_dict = compute_psd(sol, scales)
 
     # Plot branching ratio evolution
     for scale in scales
@@ -523,20 +534,87 @@ function plot_psd_and_criticality(sol, scales)
     axs[1].legend()
     axs[1].set_title("Fluctuation Scaling Exponent Over Time")
 
-    for scale in scales
-        name = scale.name
-        mean_psd = mean(psd_values[name], dims=2)
-        # mean_psd = mean_psd[:100]
-        axs[3].plot(mean_psd, label=name)
-    end
-    axs[3].set_ylabel("PSD Power")
-    axs[3].legend()
-    axs[3].set_title("Power Spectrum Density")
-    axs[3].set_xlabel("Frequency (Hz)")
+    # for scale in scales
+    #     name = scale.name
+    #     mean_psd = mean(psd_values[name], dims=2)
+    #     println(" ")
+    #     println(size(mean_psd))
+    #     println(mean_psd)
+    #     println(" ")  
+    #     mean_psd = mean_psd/maximum(mean_psd)
+    #     println(mean_psd)
+    #     println(" ")
+    #     # mean_psd = mean_psd[:56, :]
+    #     axs[3].plot(mean_psd, label=name)
+    # end
+    # axs[3].set_ylabel("PSD Power")
+    # axs[3].legend()
+    # axs[3].set_title("Power Spectrum Density")
+    # axs[3].set_xlabel("Frequency (Hz)")
+    # axs[3].set_xlims(0, 50)
+    # axs[3].set_ylims(0, 1.2)
     
     axs[2].set_xlabel("Time")
     plt.tight_layout()
-    plt.savefig("out/psd_criticality_measures.png")
+    plt.savefig("out/criticality_measures.png")
+end
+
+###############################################################################
+# 3.6) Plot PSD Features Over Time
+###############################################################################
+
+"""
+    plot_psd(sol, scales)
+
+Plot frequency analysis.
+"""
+function plot_psd(sol, scales)
+    t_vals = sol.t  # Time points
+
+    fig, axs = plt.subplots(3, 1, figsize=(10, 6), sharex=true)
+
+    # i=0
+    # sstep = 15
+    # # Compute PSD over substeps
+    # while i>=0
+    #     if i+sstep > ssize
+    #         i=-1
+    #     else
+    #         psd_values, freqs_dict = compute_psd(sol[:,], scales)
+    #         i=i+1
+    #     end
+    # end
+    # psd_values, freqs_dict = compute_psd(sol, scales)
+
+
+    for (i, scale) in enumerate(scales)
+        # name = scale.name
+        # mean_psd = mean(psd_values[name], dims=2)
+        # println(" ")
+        # println(size(mean_psd))
+        # println(mean_psd)
+        # println(" ")  
+        # mean_psd = mean_psd/maximum(mean_psd)
+        # println(mean_psd)
+        # println(" ")
+
+        # # mean_psd = mean_psd[:56, :]
+
+        x = y = -1:0.1:1
+        z = x .^ 2 .+ y' .^ 2
+        GLMakie.surface(x, y, z, st=:path_3d)
+
+        # axs[i].plot(mean_psd, label=name)
+        # axs[i].surface()
+        # axs[i].set_ylabel("Time")
+        # axs[i].legend()
+        # axs[i].set_title("Power Spectrum Density")
+        # axs[i].set_xlabel("Frequency (Hz)")
+        # axs[i].set_zlabel("PSD Power")
+    end
+    
+    plt.tight_layout()
+    plt.savefig("out/psd_measures.png")
 end
 
 ###############################################################################
@@ -761,7 +839,7 @@ function main()
     u0 = [0.01*(rand(rng)-0.5) for _ in 1:dim_total]
 
     # ODE problem
-    tspan = (0.0, 200.0)
+    tspan = (0.0, 500.0)
     prob = ODEProblem(multiscale_ode!, u0, tspan, p)
 
     sol = solve(prob, Tsit5(); dt=0.1, save_everystep=true)
@@ -774,10 +852,11 @@ end
 
 end # module
 
-using .MultiscaleFramework: main, generate_3D_movie, plot_psd_and_criticality
+using .MultiscaleFramework: main, generate_3D_movie, plot_criticality, plot_psd
 @time sol, scales = main()
 
 println(size(sol))
 
-plot_psd_and_criticality(sol, scales)
+plot_criticality(sol, scales)
+plot_psd(sol, scales)
 generate_3D_movie(sol, scales)
